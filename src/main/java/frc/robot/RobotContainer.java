@@ -12,7 +12,10 @@ import com.ctre.phoenix6.swerve.SwerveRequest;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
+import edu.wpi.first.wpilibj2.command.FunctionalCommand;
+import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
+import edu.wpi.first.wpilibj2.command.button.Trigger;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 import frc.robot.subsystems.swerve.CommandSwerveDrivetrain;
 import frc.robot.subsystems.swerve.generated.TunerConstants;
@@ -28,44 +31,97 @@ public class RobotContainer {
     private final SwerveRequest.SwerveDriveBrake brake = new SwerveRequest.SwerveDriveBrake();
     private final SwerveRequest.PointWheelsAt point = new SwerveRequest.PointWheelsAt();
 
+    private final SwerveRequest.FieldCentricFacingAngle driveFacingAngle = new SwerveRequest.FieldCentricFacingAngle()
+            .withDeadband(MaxSpeed * CommandSwerveDrivetrain.getInstance().getDriveDeadBand()).withRotationalDeadband(MaxAngularRate * CommandSwerveDrivetrain.getInstance().getTurnDeadBand())
+            .withDriveRequestType(DriveRequestType.OpenLoopVoltage);
+
     private final Telemetry logger = new Telemetry(MaxSpeed);
 
-    private final CommandXboxController joystick = new CommandXboxController(0);
+    private final CommandXboxController drivestick = new CommandXboxController(0);
 
-    public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
+    public final CommandSwerveDrivetrain drivetrain = CommandSwerveDrivetrain.getInstance();
 
     public RobotContainer() {
+        drivetrain.setSwerveRequest(driveFacingAngle);
         configureBindings();
     }
 
     private void configureBindings() {
-        // Note that X is defined as forward according to WPILib convention,
-        // and Y is defined as to the left according to WPILib convention.
         drivetrain.setDefaultCommand(
-            // Drivetrain will execute this command periodically
-            drivetrain.applyRequest(() ->
-                drive.withVelocityX(-joystick.getLeftY() * MaxSpeed) // Drive forward with negative Y (forward)
-                    .withVelocityY(-joystick.getLeftX() * MaxSpeed) // Drive left with negative X (left)
-                    .withRotationalRate(-joystick.getRightX() * MaxAngularRate) // Drive counterclockwise with negative X (left)
+            drivetrain.applyRequest(
+              () -> {
+                if (!drivetrain.getUseHeadingPID() || Math.abs(drivestick.getRightX()) > drivetrain.getTurnDeadBand()) {
+                  return drive.withVelocityX(-drivestick.getLeftY() * MaxSpeed)
+                              .withVelocityY(-drivestick.getLeftX() * MaxSpeed)
+                              .withRotationalRate(-drivestick.getRightX() * MaxAngularRate);
+                }
+                else {
+                  return driveFacingAngle.withVelocityX(-drivestick.getLeftY() * MaxSpeed)
+                        .withVelocityY(-drivestick.getLeftX() * MaxSpeed)
+                        .withTargetDirection(Rotation2d.fromDegrees(drivetrain.getTargetHeadingDegrees()));
+                  
+                }
+              }
             )
+          );
+
+        new Trigger(
+            () -> Math.abs(drivestick.getRightX()) > drivetrain.getTurnDeadBand()
+        ).onTrue(
+            new FunctionalCommand(
+                () -> {},
+                () -> {drivetrain.setTargetHeadingDegrees(drivetrain.getHeadingDegrees());}, 
+                (interrupted) -> {drivetrain.setTargetHeadingDegrees(drivetrain.getHeadingDegrees());}, 
+                () -> !drivetrain.isRotating() && Math.abs(drivestick.getRightX()) < drivetrain.getTurnDeadBand())
         );
 
-        joystick.a().whileTrue(drivetrain.applyRequest(() -> brake));
-        joystick.b().whileTrue(drivetrain.applyRequest(() ->
-            point.withModuleDirection(new Rotation2d(-joystick.getLeftY(), -joystick.getLeftX()))
+        drivestick.leftBumper().onTrue(
+            new InstantCommand(() -> drivetrain.toggleHeadingPID(), drivetrain)
+        );
+
+        drivestick.povLeft().onTrue(
+            new InstantCommand(() -> drivetrain.setTargetHeadingDegrees(90), drivetrain)
+        );
+
+        drivestick.povUp().onTrue(
+            new InstantCommand(() -> drivetrain.setTargetHeadingDegrees(0), drivetrain)
+        );
+
+        drivestick.povRight().onTrue(
+            new InstantCommand(() -> drivetrain.setTargetHeadingDegrees(-90), drivetrain)
+        );
+
+        drivestick.povDown().onTrue(
+            new InstantCommand(() -> drivetrain.setTargetHeadingDegrees(180), drivetrain)
+        );
+
+        drivestick.a().whileTrue(drivetrain.applyRequest(() -> brake));
+        drivestick.b().whileTrue(drivetrain.applyRequest(() ->
+            point.withModuleDirection(new Rotation2d(-drivestick.getLeftY(), -drivestick.getLeftX()))
         ));
 
         // Run SysId routines when holding back/start and X/Y.
         // Note that each routine should be run exactly once in a single log.
-        joystick.back().and(joystick.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
-        joystick.back().and(joystick.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
-        joystick.start().and(joystick.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
-        joystick.start().and(joystick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
+        drivestick.back().and(drivestick.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
+        drivestick.back().and(drivestick.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
+        drivestick.start().and(drivestick.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
+        drivestick.start().and(drivestick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
         // reset the field-centric heading on left bumper press
-        joystick.leftBumper().onTrue(drivetrain.runOnce(() -> drivetrain.seedFieldCentric()));
+        drivestick.start().onTrue(drivetrain.resetHeadingCommand());
 
         drivetrain.registerTelemetry(logger::telemeterize);
+    }
+
+    public void loop(){
+        MaxSpeed = drivetrain.getMaxDriveSpeed();
+        MaxAngularRate = RotationsPerSecond.of(drivetrain.getMaxTurnSpeed()).in(RadiansPerSecond);
+    
+        drive.Deadband = drivetrain.getDriveDeadBand();
+        drive.RotationalDeadband = drivetrain.getTurnDeadBand();
+    
+        driveFacingAngle.Deadband = drivetrain.getDriveDeadBand();
+        driveFacingAngle.RotationalDeadband = drivetrain.getTurnDeadBand();
     }
 
     public Command getAutonomousCommand() {

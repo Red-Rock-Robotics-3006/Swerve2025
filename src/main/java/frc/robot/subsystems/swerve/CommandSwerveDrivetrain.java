@@ -11,6 +11,7 @@ import com.ctre.phoenix6.swerve.SwerveModuleConstants;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
 import edu.wpi.first.math.Matrix;
+import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.numbers.N1;
 import edu.wpi.first.math.numbers.N3;
@@ -18,9 +19,12 @@ import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import edu.wpi.first.wpilibj.Notifier;
 import edu.wpi.first.wpilibj.RobotController;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.Subsystem;
 import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
+import frc.robot.subsystems.swerve.generated.TunerConstants;
 import frc.robot.subsystems.swerve.generated.TunerConstants.TunerSwerveDrivetrain;
 import redrocklib.logging.SmartDashboardNumber;
 
@@ -29,9 +33,27 @@ import redrocklib.logging.SmartDashboardNumber;
  * Subsystem so it can easily be used in command-based projects.
  */
 public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Subsystem {
+    private SmartDashboardNumber rotateP = new SmartDashboardNumber("dt/dt-rotate-kp", 2);
+    private SmartDashboardNumber rotateI = new SmartDashboardNumber("dt/dt-rotate-ki", 0);
+    private SmartDashboardNumber rotateD = new SmartDashboardNumber("dt/dt-rotate-d", 0.1);
+
+    private SmartDashboardNumber rotationOmegaSignificance = new SmartDashboardNumber("dt/dt-rotation-rate-limit", 1);
+    private SmartDashboardNumber driveMaxSpeed = new SmartDashboardNumber("dt/dt-max-drive-speed", 6);
+    private SmartDashboardNumber turnMaxSpeed = new SmartDashboardNumber("dt/dt-max-turn-speed", 1.5);
+    private SmartDashboardNumber driveDeadBand = new SmartDashboardNumber("dt/dt-drive-deadband", 0.05);
+    private SmartDashboardNumber turnDeadBand = new SmartDashboardNumber("dt/dt-turn-deadband", 0.05);
+
+    private boolean enableHeadingPID = false;
+
+    private double targetHeadingDegrees = 0;
+
+    private SwerveRequest.FieldCentricFacingAngle angleRequest;
+
     private static final double kSimLoopPeriod = 0.005; // 5 ms
     private Notifier m_simNotifier = null;
     private double m_lastSimTime;
+
+    private static CommandSwerveDrivetrain instance = null;
 
     /* Blue alliance sees forward as 0 degrees (toward red alliance wall) */
     private static final Rotation2d kBlueAlliancePerspectiveRotation = Rotation2d.kZero;
@@ -187,6 +209,11 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
 
     }
 
+    public void setSwerveRequest(SwerveRequest.FieldCentricFacingAngle request){
+        this.angleRequest = request;
+        angleRequest.HeadingController.enableContinuousInput(-Math.PI, Math.PI);
+    }
+
     /**
      * Returns a command that applies the specified control request to this swerve drivetrain.
      *
@@ -238,6 +265,12 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
                 m_hasAppliedOperatorPerspective = true;
             });
         }
+
+        this.angleRequest.HeadingController.setPID(this.rotateP.getNumber(), this.rotateI.getNumber(), this.rotateD.getNumber());
+        
+        SmartDashboard.putBoolean("dt/using heading pid", this.enableHeadingPID);
+        SmartDashboard.putNumber("dt/current heading", this.getHeadingDegrees());
+        SmartDashboard.putNumber("dt/target heading", this.getTargetHeadingDegrees());
     }
 
     private void startSimThread() {
@@ -253,5 +286,79 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
             updateSimState(deltaTime, RobotController.getBatteryVoltage());
         });
         m_simNotifier.startPeriodic(kSimLoopPeriod);
+    }
+
+    public Command resetHeadingCommand(){
+        return new InstantCommand(
+            () -> {
+                System.out.println("hi");
+                this.resetPose(
+                    new Pose2d(
+                        this.getState().Pose.getX(),
+                        this.getState().Pose.getY(),
+                        new Rotation2d()
+                    )
+                );
+                this.targetHeadingDegrees = 0;
+            }
+        );
+    }
+
+    public void setTargetHeadingDegrees(double degrees){
+        this.targetHeadingDegrees = degrees;
+    }
+
+    public double getHeadingDegrees(){
+        return this.getState().Pose.getRotation().getDegrees();
+    }
+
+    public double getTargetHeadingDegrees(){
+        return this.targetHeadingDegrees;
+    }
+
+    public boolean isRotating(){
+        return Math.abs(this.getPigeon2().getRate()) > this.rotationOmegaSignificance.getNumber();
+    }
+
+    public double getMaxDriveSpeed(){
+        return this.driveMaxSpeed.getNumber();
+    }
+
+    public double getMaxTurnSpeed(){
+        return this.turnMaxSpeed.getNumber();
+    }
+
+    public double getDriveDeadBand(){
+        return this.driveDeadBand.getNumber();
+    }
+
+    public double getTurnDeadBand(){
+        return this.turnDeadBand.getNumber();
+    }
+
+    public void setUseHeadingPID(boolean b){
+        this.enableHeadingPID = b;
+    }
+
+    public boolean getUseHeadingPID(){
+        return this.enableHeadingPID;
+    }
+
+    public void toggleHeadingPID(){
+        this.enableHeadingPID = !this.enableHeadingPID;
+    }
+
+    /**
+     * Returns drivetrain heading PID coefficients in the form of a double array with array.length == 3
+     * 
+     * @return Drivetrain Heading PID coeffs
+     */
+    public double[] getHeadingPIDCoeffs(){
+        return new double[]{this.rotateP.getNumber(), this.rotateI.getNumber(), this.rotateD.getNumber()};
+    }
+
+    public static CommandSwerveDrivetrain getInstance(){
+        if (instance == null) instance = TunerConstants.createDrivetrain();
+        return instance;
     }
 }
