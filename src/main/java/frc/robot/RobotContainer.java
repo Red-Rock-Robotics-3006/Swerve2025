@@ -9,7 +9,10 @@ import static edu.wpi.first.units.Units.*;
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
+import choreo.auto.AutoChooser;
+import choreo.auto.AutoFactory;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.FunctionalCommand;
@@ -41,11 +44,24 @@ public class RobotContainer {
 
     public final CommandSwerveDrivetrain drivetrain = CommandSwerveDrivetrain.getInstance();
 
+    /* Path follower */
+    private final AutoFactory autoFactory;
+    private final AutoRoutines autoRoutines;
+    private final AutoChooser autoChooser = new AutoChooser();
+
     public RobotContainer() {
-        drivetrain.setSwerveRequest(driveFacingAngle);
+        drivetrain.setSwerveRequest(this.driveFacingAngle);
+
+        autoFactory = drivetrain.createAutoFactory();
+        autoRoutines = new AutoRoutines(autoFactory);
+
+        autoChooser.addRoutine("TestPath Auto", autoRoutines::simplePathAuto);
+        SmartDashboard.putData("Auto Chooser", autoChooser);
+
         configureBindings();
     }
 
+    
     private void configureBindings() {
         drivetrain.setDefaultCommand(
             drivetrain.applyRequest(
@@ -108,7 +124,7 @@ public class RobotContainer {
         drivestick.start().and(drivestick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
         // reset the field-centric heading on left bumper press
-        drivestick.start().onTrue(drivetrain.resetHeadingCommand());
+        drivestick.start().and(drivestick.back()).onTrue(drivetrain.resetHeadingCommand());
 
         drivetrain.registerTelemetry(logger::telemeterize);
     }
@@ -125,6 +141,7 @@ public class RobotContainer {
     }
 
     public Command getAutonomousCommand() {
-        return Commands.print("No autonomous command configured");
+        /* Run the routine selected from the auto chooser */
+        return autoChooser.selectedCommand();
     }
 }
